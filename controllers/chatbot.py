@@ -159,3 +159,70 @@ class CustomChatbotController(http.Controller):
 
     def _get_chatbot_language(self):
         return request.httprequest.cookies.get('frontend_lang', request.env.user.lang or get_lang(request.env).code)
+
+    @http.route('/custom_chatbot/answer/save', type="json", auth="public", cors="*")
+    def chatbot_save_answer(self):
+        # Leer los parámetros desde el cuerpo de la solicitud
+        params = json.loads(request.httprequest.data.decode('utf-8'))
+        channel_uuid = params.get('channel_uuid')
+        message_id = params.get('message_id')
+        selected_answer_id = params.get('selected_answer_id')
+
+        # Logs de depuración
+        print(f"Channel UUID: {channel_uuid}")
+        print(f"Message ID: {message_id}")
+        print(f"Selected Answer ID: {selected_answer_id}")
+
+        # Buscar el canal de discusión
+        discuss_channel = request.env['discuss.channel'].sudo().search([('uuid', '=', channel_uuid)], limit=1)
+        if not discuss_channel:
+            return {"error": "Canal no encontrado."}
+
+        print(f"Discuss Channel ID: {discuss_channel.id}")
+
+        # Buscar el mensaje del chatbot
+        chatbot_message = request.env['chatbot.message'].sudo().search([
+            ('mail_message_id', '=', message_id),
+            ('discuss_channel_id', '=', discuss_channel.id),
+        ], limit=1)
+
+        if not chatbot_message:
+            return {"error": "Mensaje del chatbot no encontrado."}
+
+        print(f"Chatbot Message: {chatbot_message}")
+
+        # Buscar la respuesta seleccionada
+        selected_answer = request.env['chatbot.script.answer'].sudo().browse(selected_answer_id)
+
+        if not selected_answer.exists():
+            # Si no se encuentra la respuesta seleccionada, volver a enviar la pregunta original
+            question_body = chatbot_message.script_step_id.message or "No se encontró la pregunta original."
+            answers = chatbot_message.script_step_id.answer_ids
+            answers_list = [{"id": answer.id, "label": answer.name} for answer in answers]
+
+            return {
+                "error": "Respuesta no encontrada o no válida.",
+                "question": question_body,
+                "answers": answers_list
+            }
+
+        print(f"Selected Answer: {selected_answer.name}")
+
+        # Validar si la respuesta pertenece a las posibles respuestas del paso actual
+        if selected_answer in chatbot_message.script_step_id.answer_ids:
+            # Guardar la respuesta seleccionada
+            chatbot_message.write({'user_script_answer_id': selected_answer_id})
+            print(f"Respuesta seleccionada guardada: {selected_answer_id}")
+
+            return {"message": "Respuesta guardada correctamente."}
+        else:
+            # Si la respuesta no es válida, volver a enviar la pregunta original
+            question_body = chatbot_message.script_step_id.message or "No se encontró la pregunta original."
+            answers = chatbot_message.script_step_id.answer_ids
+            answers_list = [{"id": answer.id, "label": answer.name} for answer in answers]
+
+            return {
+                "error": "Respuesta no válida.",
+                "question": question_body,
+                "answers": answers_list
+            }
